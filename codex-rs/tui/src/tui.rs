@@ -56,6 +56,16 @@ mod job_control;
 /// Target frame interval for UI redraw scheduling.
 pub(crate) const TARGET_FRAME_INTERVAL: Duration = frame_rate_limiter::MIN_FRAME_INTERVAL;
 
+static KEYBOARD_ENHANCEMENT_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_keyboard_enhancement_enabled(enabled: bool) {
+    KEYBOARD_ENHANCEMENT_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn keyboard_enhancement_enabled() -> bool {
+    KEYBOARD_ENHANCEMENT_ENABLED.load(Ordering::Relaxed)
+}
+
 /// A type alias for the terminal type used in this application
 pub type Terminal = CustomTerminal<CrosstermBackend<Stdout>>;
 
@@ -69,14 +79,16 @@ pub fn set_modes() -> Result<()> {
     // Some terminals (notably legacy Windows consoles) do not support
     // keyboard enhancement flags. Attempt to enable them, but continue
     // gracefully if unsupported.
-    let _ = execute!(
-        stdout(),
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-        )
-    );
+    if keyboard_enhancement_enabled() {
+        let _ = execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+            )
+        );
+    }
 
     let _ = execute!(stdout(), EnableFocusChange);
     Ok(())
@@ -264,7 +276,8 @@ impl Tui {
 
         // Detect keyboard enhancement support before any EventStream is created so the
         // crossterm poller can acquire its lock without contention.
-        let enhanced_keys_supported = supports_keyboard_enhancement().unwrap_or(false);
+        let enhanced_keys_supported =
+            keyboard_enhancement_enabled() && supports_keyboard_enhancement().unwrap_or(false);
         // Cache this to avoid contention with the event reader.
         supports_color::on_cached(supports_color::Stream::Stdout);
         let _ = crate::terminal_palette::default_colors();
