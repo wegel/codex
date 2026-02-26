@@ -117,6 +117,7 @@ const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
 /// Smooth-mode streaming drains one line per tick, so this interval controls
 /// perceived typing speed for non-backlogged output.
 const COMMIT_ANIMATION_TICK: Duration = tui::TARGET_FRAME_INTERVAL;
+const REPLAY_SCROLLBACK_FLUSH_IDLE: Duration = Duration::from_millis(75);
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -578,6 +579,9 @@ pub(crate) struct App {
     pub(crate) overlay: Option<Overlay>,
     pub(crate) deferred_history_lines: Vec<Line<'static>>,
     has_emitted_history_lines: bool,
+    resume_history_lines: Option<usize>,
+    replay_history_lines: Vec<Line<'static>>,
+    replay_history_last_update: Option<Instant>,
 
     pub(crate) enhanced_keys_supported: bool,
 
@@ -784,6 +788,8 @@ impl App {
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         self.has_emitted_history_lines = false;
+        self.replay_history_lines.clear();
+        self.replay_history_last_update = None;
         self.backtrack = BacktrackState::default();
         self.backtrack_render_pending = false;
     }
@@ -1151,11 +1157,90 @@ impl App {
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         self.has_emitted_history_lines = false;
+        self.replay_history_lines.clear();
+        self.replay_history_last_update = None;
         self.backtrack = BacktrackState::default();
         self.backtrack_render_pending = false;
         tui.terminal.clear_scrollback()?;
         tui.terminal.clear()?;
         Ok(())
+    }
+
+    fn flush_replay_history_lines_if_ready(&mut self, tui: &mut tui::Tui, force: bool) {
+        if self.replay_history_lines.is_empty() {
+            return;
+        }
+        if !force && let Some(last_update) = self.replay_history_last_update {
+            let elapsed = last_update.elapsed();
+            if elapsed < REPLAY_SCROLLBACK_FLUSH_IDLE {
+                // Frame scheduling coalesces toward the earliest deadline. If replay keeps
+                // appending lines, the first delayed draw can fire before the idle window and
+                // we need to arm a follow-up draw so flush is not stuck waiting for user input.
+                tui.frame_requester()
+                    .schedule_frame_in(REPLAY_SCROLLBACK_FLUSH_IDLE - elapsed);
+                return;
+            }
+        }
+
+        self.replay_history_last_update = None;
+        let lines = std::mem::take(&mut self.replay_history_lines);
+        if self.overlay.is_some() {
+            self.deferred_history_lines.extend(lines);
+        } else {
+            tui.insert_history_lines(lines);
+        }
+    }
+
+    fn insert_history_cell(
+        &mut self,
+        tui: &mut tui::Tui,
+        cell: Arc<dyn HistoryCell>,
+        from_replay: bool,
+    ) {
+        if !from_replay {
+            self.flush_replay_history_lines_if_ready(tui, true);
+        }
+
+        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+            t.insert_cell(cell.clone());
+            tui.frame_requester().schedule_frame();
+        }
+        self.transcript_cells.push(cell.clone());
+        let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+        if display.is_empty() {
+            return;
+        }
+
+        // Only insert a separating blank line for new cells that are not
+        // part of an ongoing stream. Streaming continuations should not
+        // accrue extra blank lines between chunks.
+        if !cell.is_stream_continuation() {
+            if self.has_emitted_history_lines {
+                display.insert(0, Line::from(""));
+            } else {
+                self.has_emitted_history_lines = true;
+            }
+        }
+
+        if from_replay && let Some(limit) = self.resume_history_lines {
+            self.replay_history_lines.extend(display);
+            if self.replay_history_lines.len() > limit {
+                let remove = self.replay_history_lines.len() - limit;
+                self.replay_history_lines.drain(..remove);
+            }
+            self.replay_history_last_update = Some(Instant::now());
+            // Replay history flush is gated by a short idle window; schedule a delayed frame
+            // so inline scrollback appears even when no key/mouse events arrive.
+            tui.frame_requester()
+                .schedule_frame_in(REPLAY_SCROLLBACK_FLUSH_IDLE);
+            return;
+        }
+
+        if self.overlay.is_some() {
+            self.deferred_history_lines.extend(display);
+        } else {
+            tui.insert_history_lines(display);
+        }
     }
 
     fn reset_thread_event_state(&mut self) {
@@ -1304,6 +1389,7 @@ impl App {
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
         session_selection: SessionSelection,
+        resume_history_lines: Option<usize>,
         feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
         should_prompt_windows_sandbox_nux_at_startup: bool,
@@ -1512,6 +1598,9 @@ impl App {
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
+            resume_history_lines,
+            replay_history_lines: Vec::new(),
+            replay_history_last_update: None,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             backtrack: BacktrackState::default(),
@@ -1655,6 +1744,7 @@ impl App {
         event: TuiEvent,
     ) -> Result<AppRunControl> {
         if matches!(event, TuiEvent::Draw) {
+            self.flush_replay_history_lines_if_ready(tui, false);
             let size = tui.terminal.size()?;
             if size != tui.terminal.last_known_screen_size {
                 self.refresh_status_line();
@@ -1883,29 +1973,11 @@ impl App {
             }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
-                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.insert_cell(cell.clone());
-                    tui.frame_requester().schedule_frame();
-                }
-                self.transcript_cells.push(cell.clone());
-                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
-                if !display.is_empty() {
-                    // Only insert a separating blank line for new cells that are not
-                    // part of an ongoing stream. Streaming continuations should not
-                    // accrue extra blank lines between chunks.
-                    if !cell.is_stream_continuation() {
-                        if self.has_emitted_history_lines {
-                            display.insert(0, Line::from(""));
-                        } else {
-                            self.has_emitted_history_lines = true;
-                        }
-                    }
-                    if self.overlay.is_some() {
-                        self.deferred_history_lines.extend(display);
-                    } else {
-                        tui.insert_history_lines(display);
-                    }
-                }
+                self.insert_history_cell(tui, cell, false);
+            }
+            AppEvent::InsertHistoryReplayCell(cell) => {
+                let cell: Arc<dyn HistoryCell> = cell.into();
+                self.insert_history_cell(tui, cell, true);
             }
             AppEvent::ApplyThreadRollback { num_turns } => {
                 if self.apply_non_pending_thread_rollback(num_turns) {
@@ -3952,6 +4024,9 @@ mod tests {
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
+            resume_history_lines: None,
+            replay_history_lines: Vec::new(),
+            replay_history_last_update: None,
             enhanced_keys_supported: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -4011,6 +4086,9 @@ mod tests {
                 overlay: None,
                 deferred_history_lines: Vec::new(),
                 has_emitted_history_lines: false,
+                resume_history_lines: None,
+                replay_history_lines: Vec::new(),
+                replay_history_last_update: None,
                 enhanced_keys_supported: false,
                 commit_anim_running: Arc::new(AtomicBool::new(false)),
                 status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -4593,7 +4671,7 @@ mod tests {
         let mut saw_rollback = false;
         while let Ok(event) = app_event_rx.try_recv() {
             match event {
-                AppEvent::InsertHistoryCell(cell) => {
+                AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) => {
                     let cell: Arc<dyn HistoryCell> = cell.into();
                     app.transcript_cells.push(cell);
                 }
@@ -4671,7 +4749,7 @@ mod tests {
         let mut saw_rollback = false;
         while let Ok(event) = app_event_rx.try_recv() {
             match event {
-                AppEvent::InsertHistoryCell(cell) => {
+                AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) => {
                     let cell: Arc<dyn HistoryCell> = cell.into();
                     app.transcript_cells.push(cell);
                 }

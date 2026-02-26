@@ -32,6 +32,10 @@ pub struct Cli {
     #[clap(skip)]
     pub resume_show_all: bool,
 
+    /// Internal: max number of replayed history lines to print on startup.
+    #[clap(skip)]
+    pub resume_history_lines: Option<usize>,
+
     // Internal controls set by the top-level `codex fork` subcommand.
     // These are not exposed as user flags on the base `codex` command.
     #[clap(skip)]

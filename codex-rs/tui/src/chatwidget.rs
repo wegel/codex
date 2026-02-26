@@ -560,6 +560,8 @@ pub(crate) struct ChatWidget {
     stream_controller: Option<StreamController>,
     // Stream lifecycle controller for proposed plan output.
     plan_stream_controller: Option<PlanStreamController>,
+    // True while dispatching replayed events so inserted history can be tagged as replay output.
+    in_replay_dispatch: bool,
     // Latest completed user-visible Codex output that `/copy` should place on the clipboard.
     last_copyable_output: Option<String>,
     running_commands: HashMap<String, RunningCommand>,
@@ -885,8 +887,7 @@ impl ChatWidget {
         };
         self.needs_final_message_separator = true;
         let cell = history_cell::new_unified_exec_interaction(wait.command_display, String::new());
-        self.app_event_tx
-            .send(AppEvent::InsertHistoryCell(Box::new(cell)));
+        self.send_history_cell(Box::new(cell));
         self.restore_reasoning_status_header();
     }
 
@@ -2527,8 +2528,7 @@ impl ChatWidget {
                     ev.call_id
                 );
                 self.needs_final_message_separator = true;
-                self.app_event_tx
-                    .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
+                self.send_history_cell(Box::new(orphan));
                 self.request_redraw();
             }
             ExecEndTarget::NewCell => {
@@ -2827,6 +2827,7 @@ impl ChatWidget {
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             plan_stream_controller: None,
+            in_replay_dispatch: false,
             last_copyable_output: None,
             running_commands: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
@@ -3004,6 +3005,7 @@ impl ChatWidget {
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             plan_stream_controller: None,
+            in_replay_dispatch: false,
             last_copyable_output: None,
             running_commands: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
@@ -3170,6 +3172,7 @@ impl ChatWidget {
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             plan_stream_controller: None,
+            in_replay_dispatch: false,
             last_copyable_output: None,
             running_commands: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
@@ -3953,7 +3956,7 @@ impl ChatWidget {
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.active_cell.take() {
             self.needs_final_message_separator = true;
-            self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
+            self.send_history_cell(active);
         }
     }
 
@@ -3975,7 +3978,16 @@ impl ChatWidget {
             self.flush_active_cell();
             self.needs_final_message_separator = true;
         }
-        self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        self.send_history_cell(cell);
+    }
+
+    fn send_history_cell(&self, cell: Box<dyn HistoryCell>) {
+        if self.in_replay_dispatch {
+            self.app_event_tx
+                .send(AppEvent::InsertHistoryReplayCell(cell));
+        } else {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        }
     }
 
     fn queue_user_message(&mut self, user_message: UserMessage) {
@@ -4027,11 +4039,9 @@ impl ChatWidget {
         if let Some(stripped) = text.strip_prefix('!') {
             let cmd = stripped.trim();
             if cmd.is_empty() {
-                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_info_event(
-                        USER_SHELL_COMMAND_HELP_TITLE.to_string(),
-                        Some(USER_SHELL_COMMAND_HELP_HINT.to_string()),
-                    ),
+                self.send_history_cell(Box::new(history_cell::new_info_event(
+                    USER_SHELL_COMMAND_HELP_TITLE.to_string(),
+                    Some(USER_SHELL_COMMAND_HELP_HINT.to_string()),
                 )));
                 return;
             }
@@ -4299,6 +4309,7 @@ impl ChatWidget {
         replay_kind: Option<ReplayKind>,
     ) {
         let from_replay = replay_kind.is_some();
+        let previous_replay_dispatch = std::mem::replace(&mut self.in_replay_dispatch, from_replay);
         let is_resume_initial_replay =
             matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages));
         let is_stream_error = matches!(&msg, EventMsg::StreamError(_));
@@ -4507,6 +4518,7 @@ impl ChatWidget {
         if !from_replay && self.agent_turn_running {
             self.refresh_runtime_metrics();
         }
+        self.in_replay_dispatch = previous_replay_dispatch;
     }
 
     fn on_entered_review_mode(&mut self, review: ReviewRequest, from_replay: bool) {
@@ -4546,8 +4558,7 @@ impl ChatWidget {
                     let mut rendered: Vec<ratatui::text::Line<'static>> = vec!["".into()];
                     append_markdown(&explanation, None, &mut rendered);
                     let body_cell = AgentMessageCell::new(rendered, false);
-                    self.app_event_tx
-                        .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
+                    self.send_history_cell(Box::new(body_cell));
                 }
             }
             // Final message is rendered as part of the AgentMessage.
