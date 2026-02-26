@@ -252,7 +252,7 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((
@@ -311,7 +311,7 @@ async fn replayed_user_message_preserves_remote_image_urls() {
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((
@@ -418,7 +418,7 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((cell.message.clone(), cell.remote_image_urls.clone()));
@@ -469,7 +469,7 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
 
     let mut found_user_history_cell = false;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && cell.as_any().downcast_ref::<UserHistoryCell>().is_some()
         {
             found_user_history_cell = true;
@@ -500,7 +500,9 @@ async fn forked_thread_history_line_includes_name_and_id_snapshot() {
     let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             match rx.recv().await {
-                Some(AppEvent::InsertHistoryCell(cell)) => break cell,
+                Some(
+                    AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell),
+                ) => break cell,
                 Some(_) => continue,
                 None => panic!("app event channel closed before forked thread history was emitted"),
             }
@@ -531,7 +533,9 @@ async fn forked_thread_history_line_without_name_shows_id_once_snapshot() {
     let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             match rx.recv().await {
-                Some(AppEvent::InsertHistoryCell(cell)) => break cell,
+                Some(
+                    AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell),
+                ) => break cell,
                 Some(_) => continue,
                 None => panic!("app event channel closed before forked thread history was emitted"),
             }
@@ -605,7 +609,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((
@@ -698,7 +702,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((
@@ -768,7 +772,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
 
     let mut user_cell = None;
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
             user_cell = Some((cell.message.clone(), cell.remote_image_urls.clone()));
@@ -1679,6 +1683,7 @@ async fn make_chatwidget_manual(
         adaptive_chunking: crate::streaming::chunking::AdaptiveChunkingPolicy::default(),
         stream_controller: None,
         plan_stream_controller: None,
+        in_replay_dispatch: false,
         last_copyable_output: None,
         running_commands: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
@@ -1816,7 +1821,7 @@ fn drain_insert_history(
 ) -> Vec<Vec<ratatui::text::Line<'static>>> {
     let mut out = Vec::new();
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev {
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = ev {
             let mut lines = cell.display_lines(80);
             if !cell.is_stream_continuation() && !out.is_empty() && !lines.is_empty() {
                 lines.insert(0, "".into());
@@ -4918,7 +4923,7 @@ async fn slash_clear_is_disabled_while_task_running() {
 
     let event = rx.try_recv().expect("expected disabled command error");
     match event {
-        AppEvent::InsertHistoryCell(cell) => {
+        AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) => {
             let rendered = lines_to_single_string(&cell.display_lines(80));
             assert!(
                 rendered.contains("'/clear' is disabled while a task is in progress."),
@@ -6735,7 +6740,7 @@ async fn permissions_full_access_history_cell_emitted_only_after_confirmation() 
     let mut cells_before_confirmation = Vec::new();
     while let Ok(event) = rx.try_recv() {
         match event {
-            AppEvent::InsertHistoryCell(cell) => {
+            AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) => {
                 cells_before_confirmation.push(cell.display_lines(80));
             }
             AppEvent::OpenFullAccessConfirmation {
@@ -8262,7 +8267,7 @@ async fn runtime_metrics_websocket_timing_logs_and_final_separator_sums_totals()
     chat.on_task_complete(None, false);
     let mut final_separator = None;
     while let Ok(event) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = event {
+        if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) = event {
             final_separator = Some(lines_to_single_string(&cell.display_lines(300)));
         }
     }
@@ -8591,7 +8596,9 @@ printf 'fenced within fenced\n'
             chat.on_commit_tick();
             let mut inserted_any = false;
             while let Ok(app_ev) = rx.try_recv() {
-                if let AppEvent::InsertHistoryCell(cell) = app_ev {
+                if let AppEvent::InsertHistoryCell(cell) | AppEvent::InsertHistoryReplayCell(cell) =
+                    app_ev
+                {
                     let lines = cell.display_lines(width);
                     crate::insert_history::insert_history_lines(&mut term, lines)
                         .expect("Failed to insert history lines in test");

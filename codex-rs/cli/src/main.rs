@@ -198,6 +198,14 @@ struct ResumeCommand {
     #[arg(long = "all", default_value_t = false)]
     all: bool,
 
+    /// Maximum number of replayed history lines to print when opening a resumed session.
+    #[arg(
+        long = "history-lines",
+        value_name = "LINES",
+        value_parser = parse_positive_usize
+    )]
+    history_lines: Option<usize>,
+
     #[clap(flatten)]
     config_overrides: TuiCli,
 }
@@ -375,6 +383,16 @@ struct StdioToUdsCommand {
     /// Path to the Unix domain socket to connect to.
     #[arg(value_name = "SOCKET_PATH")]
     socket_path: PathBuf,
+}
+
+fn parse_positive_usize(raw: &str) -> Result<usize, String> {
+    let value = raw
+        .parse::<usize>()
+        .map_err(|err| format!("invalid value `{raw}`: {err}"))?;
+    if value == 0 {
+        return Err("expected a positive integer".to_string());
+    }
+    Ok(value)
 }
 
 fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<String> {
@@ -633,6 +651,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             session_id,
             last,
             all,
+            history_lines,
             config_overrides,
         })) => {
             interactive = finalize_resume_interactive(
@@ -641,6 +660,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 session_id,
                 last,
                 all,
+                history_lines,
                 config_overrides,
             );
             let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
@@ -934,6 +954,7 @@ fn finalize_resume_interactive(
     session_id: Option<String>,
     last: bool,
     show_all: bool,
+    history_lines: Option<usize>,
     resume_cli: TuiCli,
 ) -> TuiCli {
     // Start with the parsed interactive CLI so resume shares the same
@@ -943,6 +964,7 @@ fn finalize_resume_interactive(
     interactive.resume_last = last;
     interactive.resume_session_id = resume_session_id;
     interactive.resume_show_all = show_all;
+    interactive.resume_history_lines = history_lines;
 
     // Merge resume-scoped flags and overrides with highest precedence.
     merge_interactive_cli_flags(&mut interactive, resume_cli);
@@ -1054,6 +1076,7 @@ mod tests {
             session_id,
             last,
             all,
+            history_lines,
             config_overrides: resume_cli,
         }) = subcommand.expect("resume present")
         else {
@@ -1066,6 +1089,7 @@ mod tests {
             session_id,
             last,
             all,
+            history_lines,
             resume_cli,
         )
     }
@@ -1257,6 +1281,13 @@ mod tests {
         let interactive = finalize_resume_from_args(["codex", "resume", "--all"].as_ref());
         assert!(interactive.resume_picker);
         assert!(interactive.resume_show_all);
+    }
+
+    #[test]
+    fn resume_history_lines_flag_sets_limit() {
+        let interactive =
+            finalize_resume_from_args(["codex", "resume", "--history-lines", "120"].as_ref());
+        assert_eq!(interactive.resume_history_lines, Some(120));
     }
 
     #[test]
