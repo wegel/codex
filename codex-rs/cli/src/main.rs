@@ -1032,6 +1032,9 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     if subcommand_cli.web_search {
         interactive.web_search = true;
     }
+    if subcommand_cli.no_keyboard_enhancement {
+        interactive.no_keyboard_enhancement = true;
+    }
     if !subcommand_cli.images.is_empty() {
         interactive.images = subcommand_cli.images;
     }
@@ -1288,6 +1291,13 @@ mod tests {
         let interactive =
             finalize_resume_from_args(["codex", "resume", "--history-lines", "120"].as_ref());
         assert_eq!(interactive.resume_history_lines, Some(120));
+    }
+
+    #[test]
+    fn resume_no_keyboard_enhancement_flag_sets_mode() {
+        let interactive =
+            finalize_resume_from_args(["codex", "resume", "--no-keyboard-enhancement"].as_ref());
+        assert!(interactive.no_keyboard_enhancement);
     }
 
     #[test]

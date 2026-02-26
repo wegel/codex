@@ -550,6 +550,7 @@ async fn run_ratatui_app(
         tracing::error!("panic: {info}");
         prev_hook(info);
     }));
+    tui::set_keyboard_enhancement_enabled(!cli.no_keyboard_enhancement);
     let mut terminal = tui::init()?;
     terminal.clear()?;
 

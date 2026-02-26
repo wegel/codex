@@ -114,6 +114,12 @@ pub struct Cli {
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
 
+    /// Disable keyboard enhancement escape modes.
+    ///
+    /// Useful for terminals with buggy modifier/clipboard interactions.
+    #[arg(long = "no-keyboard-enhancement", default_value_t = false)]
+    pub no_keyboard_enhancement: bool,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
