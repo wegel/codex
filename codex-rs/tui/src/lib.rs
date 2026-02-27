@@ -916,11 +916,13 @@ async fn run_ratatui_app(
         images,
         no_alt_screen,
         resume_history_lines,
+        copy_paste_friendly,
         ..
     } = cli;
 
     let use_alt_screen = determine_alt_screen_mode(no_alt_screen, config.tui_alternate_screen);
     tui.set_alt_screen_enabled(use_alt_screen);
+    tui.set_copy_paste_friendly(copy_paste_friendly);
 
     let app_result = App::run(
         &mut tui,
@@ -933,6 +935,7 @@ async fn run_ratatui_app(
         images,
         session_selection,
         resume_history_lines,
+        copy_paste_friendly,
         feedback,
         should_show_trust_screen, // Proxy to: is it a first run in this directory?
         should_prompt_windows_sandbox_nux_at_startup,

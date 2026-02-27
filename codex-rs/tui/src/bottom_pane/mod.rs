@@ -274,6 +274,11 @@ impl BottomPane {
         self.composer.set_connectors_enabled(enabled);
     }
 
+    pub fn set_copy_paste_friendly(&mut self, enabled: bool) {
+        self.composer.set_copy_paste_friendly(enabled);
+        self.request_redraw();
+    }
+
     #[cfg(target_os = "windows")]
     pub fn set_windows_degraded_sandbox_active(&mut self, enabled: bool) {
         self.composer.set_windows_degraded_sandbox_active(enabled);

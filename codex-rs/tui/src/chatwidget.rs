@@ -462,6 +462,7 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) is_first_run: bool,
     pub(crate) feedback_audience: FeedbackAudience,
     pub(crate) model: Option<String>,
+    pub(crate) copy_paste_friendly: bool,
     // Shared latch so we only warn once about invalid status-line item IDs.
     pub(crate) status_line_invalid_items_warned: Arc<AtomicBool>,
     pub(crate) otel_manager: OtelManager,
@@ -556,6 +557,7 @@ pub(crate) struct ChatWidget {
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     rate_limit_poller: Option<JoinHandle<()>>,
     adaptive_chunking: AdaptiveChunkingPolicy,
+    copy_paste_friendly: bool,
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     // Stream lifecycle controller for proposed plan output.
@@ -2409,9 +2411,13 @@ impl ChatWidget {
                 // Reset the flag even if we don't show separator (no work was done)
                 self.needs_final_message_separator = false;
             }
-            self.stream_controller = Some(StreamController::new(
-                self.last_rendered_width.get().map(|w| w.saturating_sub(2)),
-            ));
+            let wrap_width = if self.copy_paste_friendly {
+                None
+            } else {
+                self.last_rendered_width.get().map(|w| w.saturating_sub(2))
+            };
+            self.stream_controller =
+                Some(StreamController::new(wrap_width, self.copy_paste_friendly));
         }
         if let Some(controller) = self.stream_controller.as_mut()
             && controller.push(&delta)
@@ -2755,6 +2761,7 @@ impl ChatWidget {
             is_first_run,
             feedback_audience,
             model,
+            copy_paste_friendly,
             status_line_invalid_items_warned,
             otel_manager,
         } = common;
@@ -2825,6 +2832,7 @@ impl ChatWidget {
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
+            copy_paste_friendly,
             stream_controller: None,
             plan_stream_controller: None,
             in_replay_dispatch: false,
@@ -2896,6 +2904,9 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
+        widget
+            .bottom_pane
+            .set_copy_paste_friendly(widget.copy_paste_friendly);
         widget.bottom_pane.set_collaboration_modes_enabled(true);
         widget.sync_personality_command_enabled();
         widget
@@ -2934,6 +2945,7 @@ impl ChatWidget {
             is_first_run,
             feedback_audience,
             model,
+            copy_paste_friendly,
             status_line_invalid_items_warned,
             otel_manager,
         } = common;
@@ -3003,6 +3015,7 @@ impl ChatWidget {
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
+            copy_paste_friendly,
             stream_controller: None,
             plan_stream_controller: None,
             in_replay_dispatch: false,
@@ -3074,6 +3087,9 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
+        widget
+            .bottom_pane
+            .set_copy_paste_friendly(widget.copy_paste_friendly);
         widget.bottom_pane.set_collaboration_modes_enabled(true);
         widget.sync_personality_command_enabled();
         widget
@@ -3101,6 +3117,7 @@ impl ChatWidget {
             is_first_run: _,
             feedback_audience,
             model,
+            copy_paste_friendly,
             status_line_invalid_items_warned,
             otel_manager,
         } = common;
@@ -3170,6 +3187,7 @@ impl ChatWidget {
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
+            copy_paste_friendly,
             stream_controller: None,
             plan_stream_controller: None,
             in_replay_dispatch: false,
@@ -3241,6 +3259,9 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
+        widget
+            .bottom_pane
+            .set_copy_paste_friendly(widget.copy_paste_friendly);
         widget.bottom_pane.set_collaboration_modes_enabled(true);
         widget.sync_personality_command_enabled();
         widget
@@ -4557,7 +4578,8 @@ impl ChatWidget {
                     // Show explanation when there are no structured findings.
                     let mut rendered: Vec<ratatui::text::Line<'static>> = vec!["".into()];
                     append_markdown(&explanation, None, &mut rendered);
-                    let body_cell = AgentMessageCell::new(rendered, false);
+                    let body_cell =
+                        AgentMessageCell::new(rendered, false, self.copy_paste_friendly);
                     self.send_history_cell(Box::new(body_cell));
                 }
             }

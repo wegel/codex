@@ -267,6 +267,7 @@ pub struct Tui {
     notification_backend: Option<DesktopNotificationBackend>,
     // When false, enter_alt_screen() becomes a no-op (for Zellij scrollback support)
     alt_screen_enabled: bool,
+    copy_paste_friendly: bool,
 }
 
 impl Tui {
@@ -296,12 +297,18 @@ impl Tui {
             enhanced_keys_supported,
             notification_backend: Some(detect_backend(NotificationMethod::default())),
             alt_screen_enabled: true,
+            copy_paste_friendly: false,
         }
     }
 
     /// Set whether alternate screen is enabled. When false, enter_alt_screen() becomes a no-op.
     pub fn set_alt_screen_enabled(&mut self, enabled: bool) {
         self.alt_screen_enabled = enabled;
+    }
+
+    pub fn set_copy_paste_friendly(&mut self, enabled: bool) {
+        self.copy_paste_friendly = enabled;
+        self.terminal.set_soft_wrap_transitions_enabled(enabled);
     }
 
     pub fn set_notification_method(&mut self, method: NotificationMethod) {
@@ -509,11 +516,20 @@ impl Tui {
             }
 
             if !self.pending_history_lines.is_empty() {
-                crate::insert_history::insert_history_lines(
+                let pending_history_lines = std::mem::take(&mut self.pending_history_lines);
+                let has_terminal_wrapped_lines = pending_history_lines
+                    .iter()
+                    .any(|line| line.width() > size.width.max(1) as usize);
+                crate::insert_history::insert_history_lines_with_options(
                     terminal,
-                    self.pending_history_lines.clone(),
+                    pending_history_lines,
+                    crate::insert_history::InsertHistoryOptions {
+                        copy_paste_friendly: self.copy_paste_friendly,
+                    },
                 )?;
-                self.pending_history_lines.clear();
+                if self.copy_paste_friendly && has_terminal_wrapped_lines {
+                    terminal.invalidate_viewport();
+                }
             }
 
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.

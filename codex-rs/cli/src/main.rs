@@ -1035,6 +1035,9 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     if subcommand_cli.no_keyboard_enhancement {
         interactive.no_keyboard_enhancement = true;
     }
+    if subcommand_cli.copy_paste_friendly {
+        interactive.copy_paste_friendly = true;
+    }
     if !subcommand_cli.images.is_empty() {
         interactive.images = subcommand_cli.images;
     }
@@ -1298,6 +1301,13 @@ mod tests {
         let interactive =
             finalize_resume_from_args(["codex", "resume", "--no-keyboard-enhancement"].as_ref());
         assert!(interactive.no_keyboard_enhancement);
+    }
+
+    #[test]
+    fn resume_copy_paste_friendly_flag_sets_mode() {
+        let interactive =
+            finalize_resume_from_args(["codex", "resume", "--copy-paste-friendly"].as_ref());
+        assert!(interactive.copy_paste_friendly);
     }
 
     #[test]
