@@ -31,9 +31,25 @@ use ratatui::text::Span;
 
 /// Insert `lines` above the viewport using the terminal's backend writer
 /// (avoids direct stdout references).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InsertHistoryOptions {
+    pub copy_paste_friendly: bool,
+}
+
 pub fn insert_history_lines<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
     lines: Vec<Line>,
+) -> io::Result<()>
+where
+    B: Backend + Write,
+{
+    insert_history_lines_with_options(terminal, lines, InsertHistoryOptions::default())
+}
+
+pub fn insert_history_lines_with_options<B>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    lines: Vec<Line>,
+    options: InsertHistoryOptions,
 ) -> io::Result<()>
 where
     B: Backend + Write,
@@ -61,12 +77,13 @@ where
     let mut wrapped_rows = 0usize;
 
     for line in &lines {
-        let line_wrapped =
-            if line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line) {
-                vec![line.clone()]
-            } else {
-                adaptive_wrap_line(line, RtOptions::new(wrap_width))
-            };
+        let line_wrapped = if options.copy_paste_friendly
+            || line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line)
+        {
+            vec![line.clone()]
+        } else {
+            adaptive_wrap_line(line, RtOptions::new(wrap_width))
+        };
         wrapped_rows += line_wrapped
             .iter()
             .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))

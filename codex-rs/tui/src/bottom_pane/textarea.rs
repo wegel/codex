@@ -43,6 +43,8 @@ pub(crate) struct TextArea {
     text: String,
     cursor_pos: usize,
     wrap_cache: RefCell<Option<WrapCache>>,
+    copy_paste_friendly: bool,
+    first_line_offset_cols: u16,
     preferred_col: Option<usize>,
     elements: Vec<TextElement>,
     next_element_id: u64,
@@ -52,6 +54,8 @@ pub(crate) struct TextArea {
 #[derive(Debug, Clone)]
 struct WrapCache {
     width: u16,
+    copy_paste_friendly: bool,
+    first_line_offset_cols: u16,
     lines: Vec<Range<usize>>,
 }
 
@@ -67,6 +71,8 @@ impl TextArea {
             text: String::new(),
             cursor_pos: 0,
             wrap_cache: RefCell::new(None),
+            copy_paste_friendly: false,
+            first_line_offset_cols: 0,
             preferred_col: None,
             elements: Vec::new(),
             next_element_id: 1,
@@ -182,6 +188,18 @@ impl TextArea {
         self.preferred_col = None;
     }
 
+    pub fn set_copy_paste_friendly(&mut self, enabled: bool, first_line_offset_cols: u16) {
+        let first_line_offset_cols = if enabled { first_line_offset_cols } else { 0 };
+        if self.copy_paste_friendly == enabled
+            && self.first_line_offset_cols == first_line_offset_cols
+        {
+            return;
+        }
+        self.copy_paste_friendly = enabled;
+        self.first_line_offset_cols = first_line_offset_cols;
+        self.wrap_cache.replace(None);
+    }
+
     pub fn desired_height(&self, width: u16) -> u16 {
         self.wrapped_lines(width).len() as u16
     }
@@ -197,7 +215,12 @@ impl TextArea {
         let effective_scroll = self.effective_scroll(area.height, &lines, state.scroll);
         let i = Self::wrapped_line_index_by_start(&lines, self.cursor_pos)?;
         let ls = &lines[i];
-        let col = self.text[ls.start..self.cursor_pos].width() as u16;
+        let x_offset = if self.copy_paste_friendly && i == 0 {
+            self.first_line_offset_cols
+        } else {
+            0
+        };
+        let col = x_offset + self.text[ls.start..self.cursor_pos].width() as u16;
         let screen_row = i
             .saturating_sub(effective_scroll as usize)
             .try_into()
@@ -1230,15 +1253,29 @@ impl TextArea {
         {
             let mut cache = self.wrap_cache.borrow_mut();
             let needs_recalc = match cache.as_ref() {
-                Some(c) => c.width != width,
+                Some(c) => {
+                    c.width != width
+                        || c.copy_paste_friendly != self.copy_paste_friendly
+                        || c.first_line_offset_cols != self.first_line_offset_cols
+                }
                 None => true,
             };
             if needs_recalc {
-                let lines = crate::wrapping::wrap_ranges(
-                    &self.text,
-                    Options::new(width as usize).wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
-                );
-                *cache = Some(WrapCache { width, lines });
+                let lines = if self.copy_paste_friendly {
+                    Self::terminal_wrap_ranges(&self.text, width, self.first_line_offset_cols)
+                } else {
+                    crate::wrapping::wrap_ranges(
+                        &self.text,
+                        Options::new(width as usize)
+                            .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+                    )
+                };
+                *cache = Some(WrapCache {
+                    width,
+                    copy_paste_friendly: self.copy_paste_friendly,
+                    first_line_offset_cols: self.first_line_offset_cols,
+                    lines,
+                });
             }
         }
 
@@ -1302,6 +1339,46 @@ impl StatefulWidgetRef for &TextArea {
 }
 
 impl TextArea {
+    fn terminal_wrap_ranges(
+        text: &str,
+        width: u16,
+        first_line_offset_cols: u16,
+    ) -> Vec<Range<usize>> {
+        let width = usize::from(width.max(1));
+        let first_line_capacity = width
+            .saturating_sub(usize::from(first_line_offset_cols))
+            .max(1);
+        let continuation_capacity = width;
+
+        let mut ranges = Vec::new();
+        let mut line_start = 0usize;
+        let mut line_width = 0usize;
+        let mut line_capacity = first_line_capacity;
+
+        for (idx, grapheme) in text.grapheme_indices(true) {
+            if grapheme == "\n" {
+                ranges.push(line_start..idx + 1);
+                line_start = idx + 1;
+                line_width = 0;
+                line_capacity = continuation_capacity;
+                continue;
+            }
+
+            let grapheme_width = grapheme.width().max(1);
+            if line_width > 0 && line_width + grapheme_width > line_capacity {
+                ranges.push(line_start..idx + 1);
+                line_start = idx;
+                line_width = 0;
+                line_capacity = continuation_capacity;
+            }
+
+            line_width += grapheme_width;
+        }
+
+        ranges.push(line_start..text.len() + 1);
+        ranges
+    }
+
     pub(crate) fn render_ref_masked(
         &self,
         area: Rect,
@@ -1329,8 +1406,14 @@ impl TextArea {
             let r = &lines[idx];
             let y = area.y + row as u16;
             let line_range = r.start..r.end - 1;
+            let x = area.x
+                + if self.copy_paste_friendly && idx == 0 {
+                    self.first_line_offset_cols
+                } else {
+                    0
+                };
             // Draw base line with default style.
-            buf.set_string(area.x, y, &self.text[line_range.clone()], Style::default());
+            buf.set_string(x, y, &self.text[line_range.clone()], Style::default());
 
             // Overlay styled segments for elements that intersect this line.
             for elem in &self.elements {
@@ -1343,7 +1426,7 @@ impl TextArea {
                 let styled = &self.text[overlap_start..overlap_end];
                 let x_off = self.text[line_range.start..overlap_start].width() as u16;
                 let style = Style::default().fg(Color::Cyan);
-                buf.set_string(area.x + x_off, y, styled, style);
+                buf.set_string(x + x_off, y, styled, style);
             }
         }
     }
@@ -1360,11 +1443,17 @@ impl TextArea {
             let r = &lines[idx];
             let y = area.y + row as u16;
             let line_range = r.start..r.end - 1;
+            let x = area.x
+                + if self.copy_paste_friendly && idx == 0 {
+                    self.first_line_offset_cols
+                } else {
+                    0
+                };
             let masked = self.text[line_range.clone()]
                 .chars()
                 .map(|_| mask_char)
                 .collect::<String>();
-            buf.set_string(area.x, y, &masked, Style::default());
+            buf.set_string(x, y, &masked, Style::default());
         }
     }
 }
@@ -1990,6 +2079,31 @@ mod tests {
         // After render, state.scroll should be adjusted so cursor row fits
         let effective_lines = t.desired_height(small_area.width);
         assert!(state.scroll < effective_lines);
+    }
+
+    #[test]
+    fn copy_paste_friendly_wraps_terminal_style_with_first_line_offset() {
+        let mut t = ta_with("abcdefghijklmnopqrstuvwxyz");
+        t.set_copy_paste_friendly(true, 2);
+        let lines = t.wrapped_lines(10).to_vec();
+        let rendered: Vec<&str> = lines
+            .iter()
+            .map(|r| &t.text()[r.start..r.end - 1])
+            .collect();
+        assert_eq!(rendered, vec!["abcdefgh", "ijklmnopqr", "stuvwxyz"]);
+    }
+
+    #[test]
+    fn copy_paste_friendly_cursor_offsets_only_first_visual_line() {
+        let mut t = ta_with("abcdefghij");
+        t.set_copy_paste_friendly(true, 2);
+        let area = Rect::new(0, 0, 10, 4);
+
+        t.set_cursor(0);
+        assert_eq!(t.cursor_pos(area), Some((2, 0)));
+
+        t.set_cursor(8);
+        assert_eq!(t.cursor_pos(area), Some((0, 1)));
     }
 
     #[test]

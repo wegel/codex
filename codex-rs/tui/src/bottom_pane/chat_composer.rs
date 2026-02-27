@@ -363,6 +363,7 @@ pub(crate) struct ChatComposer {
     voice_state: VoiceState,
     // Spinner control flags keyed by placeholder id; set to true to stop.
     spinner_stop_flags: HashMap<String, Arc<AtomicBool>>,
+    copy_paste_friendly: bool,
     is_task_running: bool,
     /// When false, the composer is temporarily read-only (e.g. during sandbox setup).
     input_enabled: bool,
@@ -475,6 +476,7 @@ impl ChatComposer {
             placeholder_text,
             voice_state: VoiceState::new(enhanced_keys_supported),
             spinner_stop_flags: HashMap::new(),
+            copy_paste_friendly: false,
             is_task_running: false,
             input_enabled: true,
             input_disabled_placeholder: None,
@@ -537,6 +539,12 @@ impl ChatComposer {
     pub fn set_connector_mentions(&mut self, connectors_snapshot: Option<ConnectorsSnapshot>) {
         self.connectors_snapshot = connectors_snapshot;
         self.sync_popups();
+    }
+
+    pub fn set_copy_paste_friendly(&mut self, enabled: bool) {
+        self.copy_paste_friendly = enabled;
+        self.textarea
+            .set_copy_paste_friendly(enabled, LIVE_PREFIX_COLS);
     }
 
     pub(crate) fn take_mention_bindings(&mut self) -> Vec<MentionBinding> {
@@ -637,7 +645,11 @@ impl ChatComposer {
         };
         let [composer_rect, popup_rect] =
             Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
-        let mut textarea_rect = composer_rect.inset(Insets::tlbr(1, LIVE_PREFIX_COLS, 1, 1));
+        let mut textarea_rect = if self.copy_paste_friendly {
+            composer_rect.inset(Insets::tlbr(1, 0, 1, 0))
+        } else {
+            composer_rect.inset(Insets::tlbr(1, LIVE_PREFIX_COLS, 1, 1))
+        };
         let remote_images_height = self
             .remote_images_lines(textarea_rect.width)
             .len()
@@ -4070,7 +4082,11 @@ impl Renderable for ChatComposer {
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
-        let inner_width = width.saturating_sub(COLS_WITH_MARGIN);
+        let inner_width = if self.copy_paste_friendly {
+            width
+        } else {
+            width.saturating_sub(COLS_WITH_MARGIN)
+        };
         let remote_images_height: u16 = self
             .remote_images_lines(inner_width)
             .len()
@@ -4327,12 +4343,12 @@ impl ChatComposer {
             } else {
                 "›".dim()
             };
-            buf.set_span(
-                textarea_rect.x - LIVE_PREFIX_COLS,
-                textarea_rect.y,
-                &prompt,
-                textarea_rect.width,
-            );
+            let prompt_x = if self.copy_paste_friendly {
+                textarea_rect.x
+            } else {
+                textarea_rect.x - LIVE_PREFIX_COLS
+            };
+            buf.set_span(prompt_x, textarea_rect.y, &prompt, textarea_rect.width);
         }
 
         let mut state = self.textarea_state.borrow_mut();
@@ -4353,8 +4369,13 @@ impl ChatComposer {
             };
             if !textarea_rect.is_empty() {
                 let placeholder = Span::from(text).dim();
+                let placeholder_area = if self.copy_paste_friendly {
+                    textarea_rect.inset(Insets::tlbr(0, LIVE_PREFIX_COLS, 0, 0))
+                } else {
+                    textarea_rect
+                };
                 Line::from(vec![placeholder])
-                    .render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
+                    .render_ref(placeholder_area.inner(Margin::new(0, 0)), buf);
             }
         }
     }

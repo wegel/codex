@@ -578,6 +578,7 @@ pub(crate) struct App {
     pub(crate) overlay: Option<Overlay>,
     pub(crate) deferred_history_lines: Vec<Line<'static>>,
     has_emitted_history_lines: bool,
+    copy_paste_friendly: bool,
 
     pub(crate) enhanced_keys_supported: bool,
 
@@ -668,6 +669,7 @@ impl App {
             is_first_run: false,
             feedback_audience: self.feedback_audience,
             model: Some(self.chat_widget.current_model().to_string()),
+            copy_paste_friendly: self.copy_paste_friendly,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             otel_manager: self.otel_manager.clone(),
         }
@@ -1194,6 +1196,7 @@ impl App {
             is_first_run: false,
             feedback_audience: self.feedback_audience,
             model: Some(model),
+            copy_paste_friendly: self.copy_paste_friendly,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             otel_manager: self.otel_manager.clone(),
         };
@@ -1304,6 +1307,7 @@ impl App {
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
         session_selection: SessionSelection,
+        copy_paste_friendly: bool,
         feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
         should_prompt_windows_sandbox_nux_at_startup: bool,
@@ -1410,6 +1414,7 @@ impl App {
                     is_first_run,
                     feedback_audience,
                     model: Some(model.clone()),
+                    copy_paste_friendly,
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     otel_manager: otel_manager.clone(),
                 };
@@ -1444,6 +1449,7 @@ impl App {
                     is_first_run,
                     feedback_audience,
                     model: config.model.clone(),
+                    copy_paste_friendly,
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     otel_manager: otel_manager.clone(),
                 };
@@ -1480,6 +1486,7 @@ impl App {
                     is_first_run,
                     feedback_audience,
                     model: config.model.clone(),
+                    copy_paste_friendly,
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     otel_manager: otel_manager.clone(),
                 };
@@ -1512,6 +1519,7 @@ impl App {
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
+            copy_paste_friendly,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             backtrack: BacktrackState::default(),
@@ -1888,7 +1896,7 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
                 self.transcript_cells.push(cell.clone());
-                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+                let mut display = cell.scrollback_lines(tui.terminal.last_known_screen_size.width);
                 if !display.is_empty() {
                     // Only insert a separating blank line for new cells that are not
                     // part of an ongoing stream. Streaming continuations should not
@@ -3841,6 +3849,7 @@ mod tests {
             Arc::new(AgentMessageCell::new(
                 vec![Line::from(text.to_string())],
                 true,
+                false,
             )) as Arc<dyn HistoryCell>
         };
         let make_header = |is_first| -> Arc<dyn HistoryCell> {
@@ -3952,6 +3961,7 @@ mod tests {
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
+            copy_paste_friendly: false,
             enhanced_keys_supported: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -4011,6 +4021,7 @@ mod tests {
                 overlay: None,
                 deferred_history_lines: Vec::new(),
                 has_emitted_history_lines: false,
+                copy_paste_friendly: false,
                 enhanced_keys_supported: false,
                 commit_anim_running: Arc::new(AtomicBool::new(false)),
                 status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -4337,6 +4348,7 @@ mod tests {
             Arc::new(AgentMessageCell::new(
                 vec![Line::from(text.to_string())],
                 true,
+                false,
             )) as Arc<dyn HistoryCell>
         };
 
@@ -4712,6 +4724,7 @@ mod tests {
             Arc::new(AgentMessageCell::new(
                 vec![Line::from("after first")],
                 false,
+                false,
             )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "second".to_string(),
@@ -4721,6 +4734,7 @@ mod tests {
             }) as Arc<dyn HistoryCell>,
             Arc::new(AgentMessageCell::new(
                 vec![Line::from("after second")],
+                false,
                 false,
             )) as Arc<dyn HistoryCell>,
         ];

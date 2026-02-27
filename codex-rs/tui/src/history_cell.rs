@@ -119,6 +119,14 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         self.display_lines(width)
     }
 
+    /// Returns lines for terminal scrollback insertion.
+    ///
+    /// Defaults to `display_lines`. Override when scrollback formatting
+    /// should differ from on-screen rendering.
+    fn scrollback_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.display_lines(width)
+    }
+
     /// Returns the number of viewport rows for the transcript overlay.
     ///
     /// Uses the same `Paragraph::line_count` measurement as
@@ -430,13 +438,19 @@ impl HistoryCell for ReasoningSummaryCell {
 pub(crate) struct AgentMessageCell {
     lines: Vec<Line<'static>>,
     is_first_line: bool,
+    copy_paste_friendly: bool,
 }
 
 impl AgentMessageCell {
-    pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
+    pub(crate) fn new(
+        lines: Vec<Line<'static>>,
+        is_first_line: bool,
+        copy_paste_friendly: bool,
+    ) -> Self {
         Self {
             lines,
             is_first_line,
+            copy_paste_friendly,
         }
     }
 }
@@ -453,6 +467,18 @@ impl HistoryCell for AgentMessageCell {
                 })
                 .subsequent_indent("  ".into()),
         )
+    }
+
+    fn scrollback_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.copy_paste_friendly {
+            return if self.is_first_line {
+                prefix_lines(self.lines.clone(), "• ".dim(), "".into())
+            } else {
+                self.lines.clone()
+            };
+        }
+
+        self.display_lines(width)
     }
 
     fn is_stream_continuation(&self) -> bool {
@@ -2708,9 +2734,44 @@ mod tests {
 
     #[test]
     fn empty_agent_message_cell_transcript() {
-        let cell = AgentMessageCell::new(vec![Line::default()], false);
+        let cell = AgentMessageCell::new(vec![Line::default()], false, false);
         assert_eq!(cell.transcript_lines(80), vec![Line::from("  ")]);
         assert_eq!(cell.desired_transcript_height(80), 1);
+    }
+
+    #[test]
+    fn copy_paste_friendly_agent_message_only_prefixes_first_line() {
+        let cell = AgentMessageCell::new(
+            vec![Line::from("echo one two three"), Line::from("echo four")],
+            true,
+            true,
+        );
+        let rendered = render_lines(&cell.scrollback_lines(10));
+        assert_eq!(
+            rendered,
+            vec!["• echo one two three".to_string(), "echo four".to_string()]
+        );
+    }
+
+    #[test]
+    fn copy_paste_friendly_agent_message_continuation_has_no_prefix() {
+        let cell = AgentMessageCell::new(vec![Line::from("echo one two three")], false, true);
+        let rendered = render_lines(&cell.scrollback_lines(8));
+        assert_eq!(rendered, vec!["echo one two three".to_string()]);
+    }
+
+    #[test]
+    fn copy_paste_friendly_agent_message_display_still_wraps_for_viewport() {
+        let cell = AgentMessageCell::new(vec![Line::from("echo one two three")], true, true);
+        let rendered = render_lines(&cell.display_lines(10));
+        assert_eq!(
+            rendered,
+            vec![
+                "• echo one".to_string(),
+                "  two".to_string(),
+                "  three".to_string()
+            ]
+        );
     }
 
     #[test]

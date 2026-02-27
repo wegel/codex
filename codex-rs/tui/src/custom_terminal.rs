@@ -157,6 +157,8 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    /// Whether row-to-row transitions may use terminal autowrap semantics.
+    soft_wrap_transitions_enabled: bool,
 }
 
 impl<B> Drop for Terminal<B>
@@ -198,6 +200,7 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            soft_wrap_transitions_enabled: false,
         })
     }
 
@@ -248,7 +251,14 @@ where
         if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
             self.last_known_cursor_pos = Position { x, y };
         }
-        draw(&mut self.backend, updates.into_iter())
+        let screen_width = self.current_buffer().area.width;
+        let soft_wrap_transitions_enabled = self.soft_wrap_transitions_enabled;
+        draw(
+            &mut self.backend,
+            updates.into_iter(),
+            screen_width,
+            soft_wrap_transitions_enabled,
+        )
     }
 
     /// Updates the Terminal so that internal buffers match the requested area.
@@ -266,6 +276,10 @@ where
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
         self.visible_history_rows = self.visible_history_rows.min(area.top());
+    }
+
+    pub fn set_soft_wrap_transitions_enabled(&mut self, enabled: bool) {
+        self.soft_wrap_transitions_enabled = enabled;
     }
 
     /// Queries the backend for size and resizes if it doesn't match the previous size.
@@ -424,6 +438,11 @@ where
         Ok(())
     }
 
+    /// Force the next draw to repaint the entire viewport.
+    pub fn invalidate_viewport(&mut self) {
+        self.previous_buffer_mut().reset();
+    }
+
     /// Clear terminal scrollback (if supported) and force a full redraw.
     pub fn clear_scrollback(&mut self) -> io::Result<()> {
         if self.viewport_area.is_empty() {
@@ -570,7 +589,12 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
     updates
 }
 
-fn draw<I>(writer: &mut impl Write, commands: I) -> io::Result<()>
+fn draw<I>(
+    writer: &mut impl Write,
+    commands: I,
+    screen_width: u16,
+    soft_wrap_transitions_enabled: bool,
+) -> io::Result<()>
 where
     I: Iterator<Item = DrawCommand>,
 {
@@ -578,13 +602,27 @@ where
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
     let mut last_pos: Option<Position> = None;
+    let mut last_was_put = false;
     for command in commands {
+        let is_put = command.is_put();
         let (x, y) = match command {
             DrawCommand::Put { x, y, .. } => (x, y),
             DrawCommand::ClearToEnd { x, y, .. } => (x, y),
         };
-        // Move the cursor if the previous location was not (x - 1, y)
-        if !matches!(last_pos, Some(p) if x == p.x + 1 && y == p.y) {
+        let contiguous_same_row = matches!(last_pos, Some(p) if x == p.x + 1 && y == p.y);
+        let contiguous_wrapped_row = soft_wrap_transitions_enabled
+            && is_put
+            && last_was_put
+            && screen_width > 0
+            && matches!(
+                last_pos,
+                Some(p)
+                    if p.x == screen_width.saturating_sub(1)
+                        && x == 0
+                        && y == p.y.saturating_add(1)
+            );
+        // Move the cursor unless this command naturally continues the prior one.
+        if !contiguous_same_row && !contiguous_wrapped_row {
             queue!(writer, MoveTo(x, y))?;
         }
         last_pos = Some(Position { x, y });
@@ -617,6 +655,7 @@ where
                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
             }
         }
+        last_was_put = is_put;
     }
 
     queue!(

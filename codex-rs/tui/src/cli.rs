@@ -110,6 +110,13 @@ pub struct Cli {
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
 
+    /// Use copy/paste-friendly output formatting for assistant messages.
+    ///
+    /// This keeps only the first-line prefix and avoids hard-wrapping transcript lines before
+    /// writing to terminal scrollback.
+    #[arg(long = "copy-paste-friendly", default_value_t = false)]
+    pub copy_paste_friendly: bool,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }

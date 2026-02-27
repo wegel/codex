@@ -672,8 +672,11 @@ mod tests {
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
             }) as Arc<dyn HistoryCell>,
-            Arc::new(AgentMessageCell::new(vec![Line::from("assistant")], true))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("assistant")],
+                true,
+                false,
+            )) as Arc<dyn HistoryCell>,
         ];
         trim_transcript_cells_to_nth_user(&mut cells, 0);
 
@@ -683,16 +686,22 @@ mod tests {
     #[test]
     fn trim_transcript_preserves_cells_before_selected_user() {
         let mut cells: Vec<Arc<dyn HistoryCell>> = vec![
-            Arc::new(AgentMessageCell::new(vec![Line::from("intro")], true))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("intro")],
+                true,
+                false,
+            )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "first".to_string(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
             }) as Arc<dyn HistoryCell>,
-            Arc::new(AgentMessageCell::new(vec![Line::from("after")], false))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("after")],
+                false,
+                false,
+            )) as Arc<dyn HistoryCell>,
         ];
         trim_transcript_cells_to_nth_user(&mut cells, 0);
 
@@ -714,24 +723,33 @@ mod tests {
     #[test]
     fn trim_transcript_for_later_user_keeps_prior_history() {
         let mut cells: Vec<Arc<dyn HistoryCell>> = vec![
-            Arc::new(AgentMessageCell::new(vec![Line::from("intro")], true))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("intro")],
+                true,
+                false,
+            )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "first".to_string(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
             }) as Arc<dyn HistoryCell>,
-            Arc::new(AgentMessageCell::new(vec![Line::from("between")], false))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("between")],
+                false,
+                false,
+            )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "second".to_string(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
             }) as Arc<dyn HistoryCell>,
-            Arc::new(AgentMessageCell::new(vec![Line::from("tail")], false))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("tail")],
+                false,
+                false,
+            )) as Arc<dyn HistoryCell>,
         ];
         trim_transcript_cells_to_nth_user(&mut cells, 1);
 
@@ -779,6 +797,7 @@ mod tests {
             Arc::new(AgentMessageCell::new(
                 vec![Line::from("after first")],
                 false,
+                false,
             )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "second".to_string(),
@@ -788,6 +807,7 @@ mod tests {
             }) as Arc<dyn HistoryCell>,
             Arc::new(AgentMessageCell::new(
                 vec![Line::from("after second")],
+                false,
                 false,
             )) as Arc<dyn HistoryCell>,
         ];
@@ -806,16 +826,22 @@ mod tests {
     #[test]
     fn trim_drop_last_n_user_turns_allows_overflow() {
         let mut cells: Vec<Arc<dyn HistoryCell>> = vec![
-            Arc::new(AgentMessageCell::new(vec![Line::from("intro")], true))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("intro")],
+                true,
+                false,
+            )) as Arc<dyn HistoryCell>,
             Arc::new(UserHistoryCell {
                 message: "first".to_string(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
             }) as Arc<dyn HistoryCell>,
-            Arc::new(AgentMessageCell::new(vec![Line::from("after")], false))
-                as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("after")],
+                false,
+                false,
+            )) as Arc<dyn HistoryCell>,
         ];
 
         let changed = trim_transcript_cells_drop_last_n_user_turns(&mut cells, u32::MAX);

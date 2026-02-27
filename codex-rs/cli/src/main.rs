@@ -1010,6 +1010,9 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     if subcommand_cli.web_search {
         interactive.web_search = true;
     }
+    if subcommand_cli.copy_paste_friendly {
+        interactive.copy_paste_friendly = true;
+    }
     if !subcommand_cli.images.is_empty() {
         interactive.images = subcommand_cli.images;
     }
@@ -1260,6 +1263,11 @@ mod tests {
     }
 
     #[test]
+    fn resume_copy_paste_friendly_flag_sets_mode() {
+        let interactive =
+            finalize_resume_from_args(["codex", "resume", "--copy-paste-friendly"].as_ref());
+        assert!(interactive.copy_paste_friendly);
+    }
     fn resume_merges_option_flags_and_full_auto() {
         let interactive = finalize_resume_from_args(
             [
